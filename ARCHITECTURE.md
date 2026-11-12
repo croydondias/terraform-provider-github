@@ -3,6 +3,7 @@
 This document serves as a guide for contributors implementing new features and resources in the Terraform Provider for GitHub.
 
 - [Module Map](#module-map)
+- [Architecture at a Glance](#architecture-at-a-glance)
 - [Core Principles](#core-principles)
   - [1. One Resource = One API Entity](#1-one-resource--one-api-entity)
   - [2. Minimize API Calls](#2-minimize-api-calls)
@@ -40,24 +41,80 @@ This document serves as a guide for contributors implementing new features and r
 
 ```text
 terraform-provider-github/
+├── main.go                         # Starts the Terraform provider plugin
 ├── github/
-│   ├── provider.go              # Entry point, registers all resources/data sources
-│   ├── config.go                # Auth setup, HTTP client, rate limiting, transport
-│   │
-│   ├── resource_github_*.go     # Resource implementations
-│   ├── resource_*_migration.go  # Resource state migration functions (StateUpgraders)
-│   ├── data_source_github_*.go  # Data source implementations
-│   │
-│   │
-│   ├── util.go                  # Core utilities (ID parsing, validation)
-│   ├── util_*.go                # Domain utilities (rules, labels, etc.)
-│   │
-│   └── transport.go             # HTTP transports: ETag caching, rate limiting, retries
-│
-├── ARCHITECTURE.md              # This file - implementation guide
-├── MAINTAINERS.md               # Maintainers and contributors
-└── CONTRIBUTING.md              # How to contribute
+│   ├── provider.go                  # Provider schema, registration, and configuration
+│   ├── resource_github_*.go         # Managed resources and their CRUD operations
+│   ├── data_source_github_*.go      # Read-only data sources
+│   ├── *_test.go                    # Unit and acceptance tests
+│   └── util*.go, config.go          # Shared helpers and client configuration
+├── internal/
+│   ├── ghclient/                    # GitHub REST/GraphQL client sources and transports
+│   └── tfpluginv2util/              # Terraform Plugin SDK v2 helper utilities
+├── examples/                        # Example Terraform configurations
+├── templates/                       # Inputs for generated provider documentation
+├── docs/                            # Generated provider documentation
+├── .github/workflows/               # CI, release, and repository automation
+├── ARCHITECTURE.md                  # This guide
+└── CONTRIBUTING.md                  # Contribution and validation workflow
 ```
+
+## Architecture at a Glance
+
+The provider translates Terraform's resource and data-source operations into GitHub API calls. The diagram shows that runtime path alongside the main source, test, and documentation areas.
+
+```mermaid
+flowchart TD
+    terraform["Terraform configuration"]
+    cli["Terraform CLI"]
+    sdk["Terraform Plugin SDK v2<br/>plugin protocol"]
+    entry["main.go<br/>plugin entry point"]
+    provider["github/provider.go<br/>schema and registration"]
+    resource["github/resource_github_*.go<br/>managed resources"]
+    datasource["github/data_source_github_*.go<br/>read-only lookups"]
+    configure["Provider configuration<br/>authentication, owner, API URL"]
+    legacy["github/config.go<br/>legacy client path"]
+    clients["internal/ghclient<br/>auth, client sources, caching,<br/>retries, and concurrency"]
+    meta["Configured provider metadata<br/>owner and API clients"]
+    rest["go-github REST client"]
+    graphql["githubv4 GraphQL client"]
+    api["GitHub.com or GitHub Enterprise Server"]
+    helpers["internal/tfpluginv2util<br/>SDK v2 helpers"]
+
+    subgraph repo["Repository support"]
+        tests["*_test.go<br/>unit and acceptance tests"]
+        examples["examples/<br/>Terraform usage examples"]
+        templates["templates/<br/>documentation templates"]
+        generator["tfplugindocs"]
+        docs["docs/<br/>generated provider docs"]
+    end
+
+    terraform --> cli --> sdk --> entry --> provider
+    provider -->|registers| resource
+    provider -->|registers| datasource
+    provider --> configure --> clients
+    configure -. optional legacy client .-> legacy
+    clients --> meta
+    legacy --> meta
+    resource --> meta
+    datasource --> meta
+    resource -. shared schema helpers .-> helpers
+    datasource -. shared schema helpers .-> helpers
+    meta --> rest
+    meta --> graphql
+    rest --> api
+    graphql --> api
+    resource -. tested by .-> tests
+    datasource -. tested by .-> tests
+    examples --> generator
+    templates --> generator
+    provider -. schema descriptions .-> generator
+    resource -. schema descriptions .-> generator
+    datasource -. schema descriptions .-> generator
+    generator -->|generates| docs
+```
+
+Resources manage GitHub objects; data sources read them without managing their lifecycle. Both use the configured provider metadata and the shared REST/GraphQL clients. Examples and templates are documentation inputs, while `docs/` is generated output.
 
 ---
 
